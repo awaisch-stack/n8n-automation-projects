@@ -1,0 +1,317 @@
+{
+  "name": "Instagram Content Automation - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000001",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-680, 300]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_YOUR_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000002",
+      "name": "Get Past Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-460, 300],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"brand_name\": \"Awais Automation\",\n  \"niche\": \"AI automation and workflow systems for small businesses\",\n  \"audience\": \"Business owners, agency owners and freelancers who lose hours to manual work but are not technical\",\n  \"tone\": \"Direct, practical, no hype. Explains simply without talking down.\",\n  \"brand_colors\": \"deep navy, warm amber, off-white\",\n  \"avoid_topics\": \"crypto, get-rich-quick schemes, motivational quotes, politics\",\n  \"recent_topics\": \"{{ $input.all().filter(i => i.json.topic).slice(-12).map(i => i.json.topic).join(' | ') || 'none yet - this is the first post' }}\",\n  \"today\": \"{{ $now.setZone('Asia/Karachi').format('cccc, dd LLLL yyyy') }}\"\n}",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000003",
+      "name": "Brand Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-240, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Generate today's post idea.\n\nRecent topics you must NOT repeat: {{ $json.recent_topics }}\nToday: {{ $json.today }}",
+        "options": {
+          "systemMessage": "=You are the content strategist for {{ $json.brand_name }}, an Instagram page about {{ $json.niche }}.\n\nYour audience: {{ $json.audience }}\n\nYour job is to produce ONE post idea for today. Not five. One, chosen well.\n\n## What makes a good idea\n\nA good idea is SPECIFIC. It picks one narrow thing and says something real about it.\n\nGood:  \"The n8n node that quietly breaks your workflow at 3am\"\nGood:  \"Why your chatbot costs 10x more than it should\"\nGood:  \"The one field most people forget when connecting a webhook\"\n\nBad:   \"The power of automation\"\nBad:   \"5 tips for productivity\"\nBad:   \"Why AI is the future\"\n\nThe difference: a good idea could only be written by someone who has actually done the work. A bad idea could be written by anyone with an internet connection.\n\n## Who is reading\n\nThey run businesses. They are not engineers.\n\n- They care about time, money, and things going wrong. Not elegance.\n- They have been sold to a lot. They can smell hype instantly.\n- They will believe a specific number more than any adjective.\n- If they cannot picture the problem happening in their own business, they scroll.\n\nFrame every idea around a moment they recognise: the enquiry that sat unanswered all weekend, the spreadsheet someone updates by hand every Friday, the invoice that got sent twice.\n\n## Rules\n\n- ONE idea only.\n- It must stand alone as a single image post. No carousels, no \"link in bio\", no video needed.\n- Someone must learn something usable even if they never contact you.\n- NEVER repeat these recent topics: {{ $json.recent_topics }}\n- Never touch: {{ $json.avoid_topics }}\n- Do not invent statistics, case studies, or client results. If you need a number, use one that is genuinely common knowledge, or leave it out.\n\n## Rotate the angle\n\nLook at the recent topics and pick a DIFFERENT angle from the last few posts:\n\n1. Mistake     - something people get wrong and what it costs\n2. Comparison  - manual way vs automated way, side by side\n3. Breakdown   - how one specific system actually works\n4. Myth        - a belief about automation or AI that is not true\n5. Question    - a question worth asking before automating anything\n6. Story       - a build, what broke, what you learned\n\n## Output\n\nReturn ONLY valid JSON. No markdown fences, no backticks, no commentary.\n\n{\n  \"angle\": \"which of the six angles you used\",\n  \"topic\": \"the specific idea, under 10 words\",\n  \"hook\": \"the one sentence that stops the scroll - under 15 words, concrete, no hype\",\n  \"why_it_matters\": \"one sentence on the cost of not knowing this\",\n  \"key_points\": [\"first point\", \"second point\", \"third point\"],\n  \"audience_moment\": \"the exact situation the reader will recognise from their own business\"\n}"
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000004",
+      "name": "Agent 1 - Strategist",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [-20, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.9
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000005",
+      "name": "Model - Ideas",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [-20, 520]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write the caption for this post idea:\n\n{{ $json.output }}",
+        "options": {
+          "systemMessage": "=You are the Instagram copywriter for {{ $('Brand Config').item.json.brand_name }}.\n\nTone: {{ $('Brand Config').item.json.tone }}\nAudience: {{ $('Brand Config').item.json.audience }}\n\n## The first line decides everything\n\nInstagram shows roughly the first line before collapsing into \"more\". If that line does not earn the tap, nothing else matters.\n\nThe first line must be a HOOK. Never an introduction, never a greeting, never a description of what the post is about.\n\nGood first lines:\n  \"Your chatbot is answering 'hello' with a $0.03 API call.\"\n  \"Nobody replied to that enquiry. It came in on Saturday night.\"\n  \"The workflow ran fine for three weeks. Then it didn't.\"\n\nBad first lines:\n  \"Today I want to talk about automation.\"\n  \"Automation is changing how businesses work.\"\n  \"Here are 3 tips for better workflows!\"\n\n## How to write the body\n\n- Short lines. One idea per line.\n- Blank line between thoughts. Captions are read on a phone at walking speed - dense paragraphs get skipped.\n- Under 150 words total. Shorter is almost always better.\n- Concrete over abstract. \"It ran at 2am and nobody pressed anything\" beats \"It improves efficiency\" every time.\n- Write like you are explaining something to one person who asked. Not announcing to an audience.\n\n## Banned phrases\n\nThese mark a caption as AI-written. Never use them:\n\n  \"In today's fast-paced world\"    \"Let's dive in\"\n  \"Game changer\"                    \"Unlock the power of\"\n  \"Revolutionise\"                   \"Take it to the next level\"\n  \"The future is here\"              \"Are you ready to\"\n  \"Imagine a world where\"           \"It's that simple!\"\n\nAlso avoid: starting with \"Ever wondered\", ending with \"The choice is yours\", and any sentence that could appear in any post about any topic.\n\n## Emojis\n\nMaximum two in the entire caption. Use them as punctuation, not decoration. Never start a line with one. Never use rocket, fire, or lightbulb - they are exhausted.\n\n## The closing question\n\nEnd with ONE question the reader can answer in three words without thinking hard.\n\nGood:  \"What's yours?\" / \"Which one bites you?\" / \"Sound familiar?\"\nBad:   \"What are your thoughts on the future of AI automation in business?\"\n\n## Hashtags\n\n8 to 12. Mix three sizes so the post can rank somewhere:\n  - 2-3 large (500k+ posts) for reach\n  - 4-5 medium (50k-500k) for relevance\n  - 2-3 small (under 50k) where you can actually rank\n\nRelevant only. Return them WITHOUT the # symbol.\n\n## Output\n\nReturn ONLY valid JSON. No markdown fences, no backticks, no commentary.\n\n{\n  \"hook_line\": \"the first line, standing alone\",\n  \"caption\": \"the full caption including the hook line, using \\n for line breaks\",\n  \"closing_question\": \"the question that ends the caption\",\n  \"hashtags\": [\"hashtag1\", \"hashtag2\"],\n  \"word_count\": 0\n}"
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000006",
+      "name": "Agent 2 - Copywriter",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000007",
+      "name": "Model - Caption",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [240, 520]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Create the image prompt for this post.\n\nPost idea: {{ $('Agent 1 - Strategist').item.json.output }}\n\nCaption: {{ $json.output }}",
+        "options": {
+          "systemMessage": "=You write prompts for an AI image generator.\n\nBrand colours: {{ $('Brand Config').item.json.brand_colors }}\n\n## What the image is for\n\nThe image stops the scroll. The caption does the explaining.\n\nSo the image does NOT summarise the post. It creates a moment that makes someone pause long enough to read the first line.\n\n## Describe a scene, not a concept\n\nImage generators cannot render abstractions. They render things.\n\nWorks:\n  \"A dark desk at 2am, single monitor glowing, a phone face-down beside a cold cup of tea, warm amber light from one lamp, shot from behind at shoulder height\"\n\nDoes not work:\n  \"Automation and efficiency in business\"\n  \"The concept of AI helping humans\"\n  \"Productivity and growth\"\n\nIf your prompt contains a word you cannot photograph, replace it.\n\n## Always specify all six\n\n1. Subject   - what is physically in frame\n2. Setting   - where, and what time of day\n3. Lighting  - direction, quality, colour\n4. Palette   - pull from the brand colours above\n5. Camera    - angle, distance, lens feel\n6. Mood      - the feeling in one or two words\n\n## Hard rules\n\n- NO text, letters, numbers, words, logos, labels, signage, or UI elements anywhere in the image. Generators render text as broken nonsense and it looks amateur. This is the single most common failure - check your prompt twice for it.\n- NO human faces. Hands, silhouettes, backs of heads and shoulders are fine.\n- Must compose well as a 1:1 square. Leave breathing room around the subject.\n- Under 60 words.\n- No brand logos, no recognisable products, no copyrighted characters.\n\n## Style\n\nPick ONE and commit. Do not mix - mixed prompts produce muddy images.\n\n  photographic    - real, grounded, for \"this happens in your business\"\n  cinematic       - dramatic light, for tension or a problem\n  minimal 3d      - clean shapes, for explaining a system\n  editorial flat  - illustration, for comparisons and lists\n\n## Output\n\nReturn ONLY valid JSON. No markdown fences, no backticks, no commentary.\n\n{\n  \"image_prompt\": \"the complete prompt, under 60 words, no text elements\",\n  \"style\": \"photographic | cinematic | minimal 3d | editorial flat\",\n  \"alt_text\": \"one plain sentence describing the image, for accessibility\",\n  \"why_this_image\": \"one sentence on why this scene fits this post\"\n}"
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000008",
+      "name": "Agent 3 - Image Prompt",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.6
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000009",
+      "name": "Model - Image Prompt",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [500, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safely parse all three agent outputs.\n// Agents sometimes wrap JSON in markdown fences despite instructions.\n\nfunction parseAgent(raw, label) {\n  if (raw === undefined || raw === null) {\n    throw new Error(`${label}: no output received`);\n  }\n  if (typeof raw === 'object') return raw;\n\n  let text = String(raw).trim();\n  text = text.replace(/```json/gi, '').replace(/```/g, '').trim();\n\n  // grab the outermost JSON object if there is stray prose around it\n  const start = text.indexOf('{');\n  const end   = text.lastIndexOf('}');\n  if (start !== -1 && end !== -1 && end > start) {\n    text = text.slice(start, end + 1);\n  }\n\n  try {\n    return JSON.parse(text);\n  } catch (e) {\n    throw new Error(`${label}: could not parse JSON. Raw output was: ${String(raw).slice(0, 300)}`);\n  }\n}\n\nconst idea    = parseAgent($('Agent 1 - Strategist').first().json.output,  'Agent 1');\nconst caption = parseAgent($('Agent 2 - Copywriter').first().json.output,  'Agent 2');\nconst image   = parseAgent($('Agent 3 - Image Prompt').first().json.output, 'Agent 3');\n\n// Build the final caption with hashtags appended\nconst tags = (caption.hashtags || [])\n  .map(t => '#' + String(t).replace(/^#/, '').trim())\n  .join(' ');\n\nconst finalCaption = `${caption.caption}\\n\\n${tags}`;\n\nreturn [{\n  json: {\n    date:          $now.setZone('Asia/Karachi').toFormat('yyyy-LL-dd'),\n    angle:         idea.angle          || '',\n    topic:         idea.topic          || '',\n    hook:          idea.hook           || '',\n    key_points:    (idea.key_points || []).join(' | '),\n    hook_line:     caption.hook_line   || '',\n    caption:       caption.caption     || '',\n    hashtags:      tags,\n    final_caption: finalCaption,\n    word_count:    caption.word_count  || 0,\n    image_prompt:  image.image_prompt  || '',\n    image_style:   image.style         || '',\n    alt_text:      image.alt_text      || ''\n  }\n}];"
+      },
+      "id": "b1000000-0000-4000-8000-000000000010",
+      "name": "Parse & Assemble",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "prompt": "={{ $json.image_prompt }}",
+        "options": {
+          "size": "1024x1024",
+          "quality": "hd"
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000011",
+      "name": "Generate Image",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Parse & Assemble').item.json.date }}-{{ $('Parse & Assemble').item.json.topic.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase().slice(0,40) }}.png",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "PASTE_YOUR_FOLDER_ID_HERE",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000012",
+      "name": "Upload to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "share",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "permissionsUi": {
+          "permissionsValues": {
+            "role": "reader",
+            "type": "anyone"
+          }
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000013",
+      "name": "Make Public",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_YOUR_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date":         "={{ $('Parse & Assemble').item.json.date }}",
+            "angle":        "={{ $('Parse & Assemble').item.json.angle }}",
+            "topic":        "={{ $('Parse & Assemble').item.json.topic }}",
+            "hook":         "={{ $('Parse & Assemble').item.json.hook }}",
+            "caption":      "={{ $('Parse & Assemble').item.json.caption }}",
+            "hashtags":     "={{ $('Parse & Assemble').item.json.hashtags }}",
+            "image_prompt": "={{ $('Parse & Assemble').item.json.image_prompt }}",
+            "alt_text":     "={{ $('Parse & Assemble').item.json.alt_text }}",
+            "drive_link":   "={{ $('Upload to Drive').item.json.webViewLink || $('Upload to Drive').item.json.webContentLink }}",
+            "status":       "ready"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000014",
+      "name": "Log to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1720, 300]
+    },
+    {
+      "parameters": {
+        "content": "## Instagram Content Automation\n\n**Runs daily at 9am.**\n\nGet Past Posts → reads the last 12 topics so Agent 1 never repeats itself. This is the node most people forget.\n\nAgent 1 → idea\nAgent 2 → caption\nAgent 3 → image prompt\n\nParse & Assemble safely parses all three JSON outputs and strips markdown fences.\n\nImage is generated, uploaded, made public, THEN logged to the sheet — so the drive link actually gets saved.\n\nNo memory nodes: this is a one-shot pipeline, not a conversation.",
+        "height": 320,
+        "width": 460,
+        "color": 4
+      },
+      "id": "b1000000-0000-4000-8000-000000000015",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-680, -80]
+    },
+    {
+      "parameters": {
+        "content": "## Temperatures\n\nIdeas: 0.9 — needs variety\nCaption: 0.7 — creative but controlled\nImage: 0.6 — structured output\n\nDon't raise the image one. It starts inventing text elements.",
+        "height": 220,
+        "width": 300,
+        "color": 5
+      },
+      "id": "b1000000-0000-4000-8000-000000000016",
+      "name": "Notes 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 700]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [[{ "node": "Get Past Posts", "type": "main", "index": 0 }]]
+    },
+    "Get Past Posts": {
+      "main": [[{ "node": "Brand Config", "type": "main", "index": 0 }]]
+    },
+    "Brand Config": {
+      "main": [[{ "node": "Agent 1 - Strategist", "type": "main", "index": 0 }]]
+    },
+    "Agent 1 - Strategist": {
+      "main": [[{ "node": "Agent 2 - Copywriter", "type": "main", "index": 0 }]]
+    },
+    "Agent 2 - Copywriter": {
+      "main": [[{ "node": "Agent 3 - Image Prompt", "type": "main", "index": 0 }]]
+    },
+    "Agent 3 - Image Prompt": {
+      "main": [[{ "node": "Parse & Assemble", "type": "main", "index": 0 }]]
+    },
+    "Parse & Assemble": {
+      "main": [[{ "node": "Generate Image", "type": "main", "index": 0 }]]
+    },
+    "Generate Image": {
+      "main": [[{ "node": "Upload to Drive", "type": "main", "index": 0 }]]
+    },
+    "Upload to Drive": {
+      "main": [[{ "node": "Make Public", "type": "main", "index": 0 }]]
+    },
+    "Make Public": {
+      "main": [[{ "node": "Log to Sheet", "type": "main", "index": 0 }]]
+    },
+    "Model - Ideas": {
+      "ai_languageModel": [[{ "node": "Agent 1 - Strategist", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Model - Caption": {
+      "ai_languageModel": [[{ "node": "Agent 2 - Copywriter", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Model - Image Prompt": {
+      "ai_languageModel": [[{ "node": "Agent 3 - Image Prompt", "type": "ai_languageModel", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "instagram-content-automation-fixed"
+  },
+  "tags": []
+}
