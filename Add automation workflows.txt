@@ -1,0 +1,178 @@
+{
+  "name": "Real Estate Lead Follow-up (Demo)",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "options": {}
+      },
+      "id": "1a1a1a1a-0001-0001-0001-000000000001",
+      "name": "Chat trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [-200, 0],
+      "webhookId": "lead-followup-demo"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n1",
+              "name": "lead_name",
+              "value": "={{ $json.chatInput.split(',')[0] || 'Unknown Lead' }}",
+              "type": "string"
+            },
+            {
+              "id": "n2",
+              "name": "lead_phone",
+              "value": "={{ $json.chatInput.match(/\\d{10,13}/) ? $json.chatInput.match(/\\d{10,13}/)[0] : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "n3",
+              "name": "lead_email",
+              "value": "={{ $json.chatInput.match(/[\\w.-]+@[\\w.-]+\\.\\w+/) ? $json.chatInput.match(/[\\w.-]+@[\\w.-]+\\.\\w+/)[0] : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "n4",
+              "name": "raw_message",
+              "value": "={{ $json.chatInput }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1a1a1a1a-0002-0002-0002-000000000002",
+      "name": "Extract lead info",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [20, 0]
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "upsert",
+        "email": "={{ $json.lead_email }}",
+        "additionalFields": {
+          "firstname": "={{ $json.lead_name }}",
+          "phone": "={{ $json.lead_phone }}"
+        }
+      },
+      "id": "1a1a1a1a-0003-0003-0003-000000000003",
+      "name": "HubSpot: contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "credentials": {
+        "hubspotApi": {
+          "id": "REPLACE_WITH_YOUR_HUBSPOT_CREDENTIAL_ID",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "agency@yourdomain.com",
+        "toEmail": "={{ $json.lead_email }}",
+        "subject": "Thanks for your inquiry!",
+        "emailFormat": "text",
+        "text": "=Hi {{ $json.lead_name }},\n\nThanks for reaching out! One of our agents will call you shortly on {{ $json.lead_phone }}.\n\nMeanwhile feel free to browse our latest listings.\n\nRegards,\nYour Real Estate Team"
+      },
+      "id": "1a1a1a1a-0004-0004-0004-000000000004",
+      "name": "Send email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [460, -80],
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_YOUR_SMTP_CREDENTIAL_ID",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "REPLACE_WITH_WHATSAPP_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $json.lead_phone }}",
+        "textBody": "=Hi {{ $json.lead_name }}, thanks for your interest! Our agent will reach out to you soon. Reply here anytime with questions."
+      },
+      "id": "1a1a1a1a-0005-0005-0005-000000000005",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [460, 80],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REPLACE_WITH_YOUR_WHATSAPP_CREDENTIAL_ID",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "days"
+      },
+      "id": "1a1a1a1a-0006-0006-0006-000000000006",
+      "name": "Wait 1 day",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [680, 0]
+    },
+    {
+      "parameters": {
+        "resource": "engagement",
+        "operation": "create",
+        "type": "TASK",
+        "additionalFields": {
+          "body": "=Follow up with {{ $json.lead_name }} ({{ $json.lead_phone }}) - no response after 1 day",
+          "ownerId": ""
+        }
+      },
+      "id": "1a1a1a1a-0007-0007-0007-000000000007",
+      "name": "HubSpot: follow-up task",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [900, 0],
+      "credentials": {
+        "hubspotApi": {
+          "id": "REPLACE_WITH_YOUR_HUBSPOT_CREDENTIAL_ID",
+          "name": "HubSpot account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Chat trigger": {
+      "main": [[{ "node": "Extract lead info", "type": "main", "index": 0 }]]
+    },
+    "Extract lead info": {
+      "main": [[{ "node": "HubSpot: contact", "type": "main", "index": 0 }]]
+    },
+    "HubSpot: contact": {
+      "main": [[
+        { "node": "Send email", "type": "main", "index": 0 },
+        { "node": "Send WhatsApp", "type": "main", "index": 0 }
+      ]]
+    },
+    "Send email": {
+      "main": [[{ "node": "Wait 1 day", "type": "main", "index": 0 }]]
+    },
+    "Send WhatsApp": {
+      "main": [[{ "node": "Wait 1 day", "type": "main", "index": 0 }]]
+    },
+    "Wait 1 day": {
+      "main": [[{ "node": "HubSpot: follow-up task", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
