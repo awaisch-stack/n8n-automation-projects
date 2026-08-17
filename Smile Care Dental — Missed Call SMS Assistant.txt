@@ -1,0 +1,430 @@
+{
+  "name": "Smile Care Dental — Missed Call SMS Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "smilecare-missed-call",
+        "options": {}
+      },
+      "id": "wh-missedcall",
+      "name": "Twilio Missed Call Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-820, -200],
+      "webhookId": "smilecare-missed-call"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "call-unanswered",
+              "leftValue": "={{ $json.body.CallStatus }}",
+              "rightValue": "no-answer,busy,failed,canceled",
+              "operator": {
+                "type": "string",
+                "operation": "contains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "if-missed",
+      "name": "Call Actually Missed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-600, -200]
+    },
+    {
+      "parameters": {
+        "resource": "sms",
+        "operation": "send",
+        "from": "={{ $vars.CLINIC_TWILIO_NUMBER }}",
+        "to": "={{ $json.body.From }}",
+        "message": "Salam, Smile Care Dental se — sorry we missed your call! What can we help you with?",
+        "options": {}
+      },
+      "id": "sms-first",
+      "name": "Send First Text",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [-360, -220]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "smilecare-sms",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-sms",
+      "name": "Twilio SMS In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-820, 160],
+      "webhookId": "smilecare-sms"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Deterministic safety screen ───────────────────────────────────────────\n// This runs BEFORE the LLM. If it trips, the model never sees the message —\n// we send the fixed emergency line and alert the clinic. Over-cautious by\n// design: a false positive costs one phone call.\n\nconst b = $json.body || $json;\nconst from = b.From || '';\nconst text = String(b.Body || '').trim();\nconst lower = text.toLowerCase();\n\n// English + Roman Urdu. Keep these as plain substrings, not word boundaries —\n// Roman Urdu spelling varies wildly (sooj / suj / soojan).\nconst EMERGENCY = [\n  // severe pain\n  'severe', 'unbearable', 'excruciating', 'agony', 'killing me', 'cant bear', \"can't bear\",\n  'bardasht', 'bardaasht', 'shadeed', 'sakht dard', 'bohat dard', 'bahut dard', 'buhat dard',\n  'boht dard', 'zyada dard', 'ziyada dard', 'dard se mar',\n  // swelling\n  'swell', 'swollen', 'sooj', 'suj', 'soj', 'waram', 'waram',\n  // bleeding\n  'bleeding', 'blood', 'khoon', 'khun',\n  // trauma\n  'knocked out', 'knocked my', 'broke my tooth', 'broken tooth', 'toot gaya', 'tut gaya',\n  'toot gaya hai', 'accident', 'fell', 'fall', 'gir gaya', 'gir gayi', 'lag gayi', 'chot',\n  // airway / swallow / trismus\n  'swallow', 'breath', 'breathe', 'saans', 'sans', 'nigal', 'muh nahi khul', 'munh nahi khul',\n  'mouth wont open', \"mouth won't open\", 'jaw stuck',\n  // fever\n  'fever', 'bukhar', 'bukhaar', 'temperature ho',\n  // explicit\n  'emergency', 'urgent', 'foran', 'fauran', 'abhi aana'\n];\n\n// A child is only an emergency when pain/symptoms are involved — a routine\n// kid check-up should still book normally.\nconst CHILD = ['child', 'kid', 'my son', 'my daughter', 'baby', 'toddler',\n               'bacha', 'bachay', 'bache', 'bachi', 'beta ', 'beti '];\nconst PAIN  = ['pain', 'hurt', 'ache', 'aching', 'dard', 'takleef', 'taklif', 'ro raha', 'ro rahi'];\n\nconst hit = EMERGENCY.find(k => lower.includes(k));\nconst childPain = CHILD.some(k => lower.includes(k)) && PAIN.some(k => lower.includes(k));\n\nconst isEmergency = Boolean(hit) || childPain;\n\nreturn [{\n  json: {\n    from,\n    to: b.To || '',\n    text,\n    messageSid: b.MessageSid || '',\n    isEmergency,\n    triggeredBy: hit || (childPain ? 'child + pain' : null)\n  }\n}];"
+      },
+      "id": "code-screen",
+      "name": "Safety Screen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-600, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-emergency",
+              "leftValue": "={{ $json.isEmergency }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-emergency",
+      "name": "Emergency?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-380, 160]
+    },
+    {
+      "parameters": {
+        "resource": "sms",
+        "operation": "send",
+        "from": "={{ $vars.CLINIC_TWILIO_NUMBER }}",
+        "to": "={{ $json.from }}",
+        "message": "That needs to be seen right away. Calling you back in 2 minutes — if it's urgent please come straight to the clinic or go to the nearest emergency room.",
+        "options": {}
+      },
+      "id": "sms-emergency",
+      "name": "Send Emergency Line",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [-140, 40]
+    },
+    {
+      "parameters": {
+        "resource": "sms",
+        "operation": "send",
+        "from": "={{ $vars.CLINIC_TWILIO_NUMBER }}",
+        "to": "={{ $vars.CLINIC_STAFF_NUMBER }}",
+        "message": "=EMERGENCY — call back NOW.\nPatient: {{ $('Safety Screen').item.json.from }}\nMessage: {{ $('Safety Screen').item.json.text }}\nFlagged by: {{ $('Safety Screen').item.json.triggeredBy || 'AI' }}",
+        "options": {}
+      },
+      "id": "sms-alert-emergency",
+      "name": "Alert Clinic — EMERGENCY",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [100, 40]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the SMS assistant for Smile Care Dental, a dental clinic in Lahore. Someone called and nobody answered. You are texting them back.\n\nThey wanted an answer NOW and didn't get one. You have one or two messages before they call another clinic. Do not waste them.\n\n## Clinic details\nName: Smile Care Dental\nLocation: Block C, Johar Town, Lahore (near Emporium Mall)\nHours: Monday to Saturday, 10:00 AM to 8:00 PM. Closed Sunday.\nPhone: 042-XXXXXXX\nDentists: Dr. Sara Ahmed, Dr. Bilal Khan\n\nServices and pricing:\nConsultation / check-up Rs 1,000\nScaling and polishing Rs 5,000\nFilling Rs 3,500 to Rs 6,000 depending on the tooth\nRoot canal Rs 15,000 to Rs 25,000 depending on the tooth\nTooth extraction Rs 4,000 (simple), surgical is quoted after X-ray\nCrown Rs 20,000 to Rs 35,000\nBraces Rs 120,000 and up, consultation needed first\nTeeth whitening Rs 18,000\nX-ray Rs 1,500\n\nWe do NOT do: cosmetic surgery, jaw surgery, implants (we refer these out).\n\n## MEDICAL SAFETY — this overrides everything else\nYou are not a dentist. You cannot diagnose anything. Ever.\n\nIf someone describes a symptom, DO NOT explain what it might be, how serious it is, what causes it, or what they should do about it. Not even a small hint.\nNever say: \"That sounds like an infection\". Never say: \"It's probably just sensitivity, nothing to worry about\". Never say: \"You should take a painkiller\". Never say: \"That can wait until next week\".\nInstead, get them seen. That is your only medical response: \"Let's get you looked at — can you come in today?\"\n\n### Emergencies. Escalate IMMEDIATELY, do not book, do not chat.\nSevere or unbearable pain. Swelling of the face, jaw, gum, or under the eye. Bleeding that won't stop. A tooth knocked out or broken from an injury. Difficulty swallowing, breathing, or opening the mouth. Fever along with tooth pain. Any injury from an accident or fall. Anything involving a child in pain.\n\nFor these, set escalate=true, reason=\"emergency\", and reply with EXACTLY this and nothing else:\n\"That needs to be seen right away. Calling you back in 2 minutes — if it's urgent please come straight to the clinic or go to the nearest emergency room.\"\nThen stop. No follow-up questions. No booking.\n\nIf you are unsure whether something is an emergency, treat it as one. Being over-cautious costs a phone call. Being under-cautious costs much more.\n\n## How to write for SMS\nONE OR TWO SENTENCES. That is the rule, not a suggestion.\nGood: \"We're open till 8 today. Want me to book you in?\"\nGood: \"Scaling is Rs 5,000. What day suits you?\"\nGood: \"Haan, Johar Town mein hain. Kab aana chahenge?\"\n\nRules: No greetings after the first message. No sign-offs. No bullet points, no line breaks, no formatting. No emojis. Contractions always. Match their language exactly — Roman Urdu in, Roman Urdu out; English in, English out. Match their energy — lowercase casual text gets a casual reply. Don't repeat the clinic name every text.\n\n## ONE question at a time\nNever ask two things in one message. Ask what they need. Then, after they answer, ask the day. Then the time.\n\n## Your goal, in order\n1. Find out what they need. 2. Book them in. 3. If you can't book, get their name and a callback time.\nYou are not here to be generally helpful. You are here to turn a missed call into an appointment.\n\n## Booking\nYou need three things: treatment (or \"check-up\" if they're not sure), day, and morning/evening or a specific time. Collect them one at a time, then confirm in one short message: \"Done — Tuesday 5pm with Dr. Sara for a check-up. See you then.\"\nNever offer a slot you haven't checked. If it's taken, say so and offer the nearest one.\nWhen a booking is complete set booking_complete=true and fill treatment, day and time.\nFirst-time patients: after booking, add one short line: \"First visit — just bring your CNIC, takes about 30 minutes.\"\n\n## Pricing\nPrices above can be given directly. For ranges, give the range and say the exact figure depends on the tooth and needs an X-ray to confirm. Not listed: the dentist will confirm at the consultation. Never negotiate. Never offer a discount. Never call a treatment cheap or expensive.\nIf someone says it's too expensive: \"I understand — the consultation is Rs 1,000 and Dr. Sara can walk you through the options.\" Then stop.\n\n## Escalate to a human (set escalate=true) when\nAnything medical or symptom-related beyond \"I need a check-up\". Any emergency. They're angry, complaining, or mention a bad previous experience. They ask about a treatment we don't do. They ask for a specific dentist who isn't available. They mention a refund, a dispute, or legal action. They ask to speak to a human.\nWhen escalating for a non-emergency, still reply in one short line telling them someone will call — then stop.\n\n## Output\nReturn JSON only, matching the schema. \"reply\" is the literal SMS text — no quotes around it, no labels, no line breaks."
+        }
+      },
+      "id": "agent",
+      "name": "SMS Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [-140, 320]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-5",
+        "options": {
+          "temperature": 0.3,
+          "maxTokensToSample": 300
+        }
+      },
+      "id": "llm",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [-240, 540]
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Safety Screen').item.json.from }}",
+        "contextWindowLength": 12
+      },
+      "id": "memory",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [-100, 540]
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\"reply\", \"escalate\", \"booking_complete\"],\n  \"properties\": {\n    \"reply\": {\n      \"type\": \"string\",\n      \"description\": \"The SMS text to send. One or two sentences, no line breaks.\"\n    },\n    \"escalate\": {\n      \"type\": \"boolean\",\n      \"description\": \"True if a human at the clinic must take over.\"\n    },\n    \"reason\": {\n      \"type\": \"string\",\n      \"description\": \"Why escalating: emergency, symptom, angry, unsupported_treatment, refund, asked_for_human, other. Empty if not escalating.\"\n    },\n    \"booking_complete\": {\n      \"type\": \"boolean\",\n      \"description\": \"True only when treatment, day and time are all confirmed.\"\n    },\n    \"treatment\": { \"type\": \"string\" },\n    \"day\": { \"type\": \"string\" },\n    \"time\": { \"type\": \"string\" },\n    \"patient_name\": { \"type\": \"string\" }\n  }\n}"
+      },
+      "id": "parser",
+      "name": "Structured Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [40, 540]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten the agent output and hard-cap the SMS length. The prompt says one or\n// two sentences; this is the belt-and-braces version so a runaway generation\n// never goes out as three segments.\nconst out = $json.output || $json;\nconst screen = $('Safety Screen').first().json;\n\nlet reply = String(out.reply || '').replace(/\\s*\\n+\\s*/g, ' ').trim();\nif (reply.length > 320) reply = reply.slice(0, 317).trimEnd() + '...';\n\nreturn [{\n  json: {\n    from: screen.from,\n    inbound: screen.text,\n    reply,\n    escalate: Boolean(out.escalate),\n    reason: out.reason || '',\n    booking_complete: Boolean(out.booking_complete),\n    treatment: out.treatment || '',\n    day: out.day || '',\n    time: out.time || '',\n    patient_name: out.patient_name || ''\n  }\n}];"
+      },
+      "id": "code-prep",
+      "name": "Prepare Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 320]
+    },
+    {
+      "parameters": {
+        "resource": "sms",
+        "operation": "send",
+        "from": "={{ $vars.CLINIC_TWILIO_NUMBER }}",
+        "to": "={{ $json.from }}",
+        "message": "={{ $json.reply }}",
+        "options": {}
+      },
+      "id": "sms-reply",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [440, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "needs-human",
+              "leftValue": "={{ $json.escalate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-escalate",
+      "name": "Needs a Human?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660, 320]
+    },
+    {
+      "parameters": {
+        "resource": "sms",
+        "operation": "send",
+        "from": "={{ $vars.CLINIC_TWILIO_NUMBER }}",
+        "to": "={{ $vars.CLINIC_STAFF_NUMBER }}",
+        "message": "=Handover needed ({{ $json.reason }}).\nPatient: {{ $json.from }}\nSaid: {{ $json.inbound }}\nWe replied: {{ $json.reply }}",
+        "options": {}
+      },
+      "id": "sms-alert-human",
+      "name": "Alert Clinic — Handover",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [880, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "booked",
+              "leftValue": "={{ $json.booking_complete }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-booked",
+      "name": "Booking Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 420]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Appointments",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Booked At": "={{ $now.setZone('Asia/Karachi').toFormat('yyyy-LL-dd HH:mm') }}",
+            "Phone": "={{ $json.from }}",
+            "Name": "={{ $json.patient_name }}",
+            "Treatment": "={{ $json.treatment }}",
+            "Day": "={{ $json.day }}",
+            "Time": "={{ $json.time }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "sheet-log",
+      "name": "Log Appointment",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<Response></Response>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond",
+      "name": "Empty TwiML 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 320]
+    }
+  ],
+  "connections": {
+    "Twilio Missed Call Webhook": {
+      "main": [[{ "node": "Call Actually Missed?", "type": "main", "index": 0 }]]
+    },
+    "Call Actually Missed?": {
+      "main": [[{ "node": "Send First Text", "type": "main", "index": 0 }], []]
+    },
+    "Twilio SMS In": {
+      "main": [[{ "node": "Safety Screen", "type": "main", "index": 0 }]]
+    },
+    "Safety Screen": {
+      "main": [[{ "node": "Emergency?", "type": "main", "index": 0 }]]
+    },
+    "Emergency?": {
+      "main": [
+        [{ "node": "Send Emergency Line", "type": "main", "index": 0 }],
+        [{ "node": "SMS Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Emergency Line": {
+      "main": [[{ "node": "Alert Clinic — EMERGENCY", "type": "main", "index": 0 }]]
+    },
+    "Alert Clinic — EMERGENCY": {
+      "main": [[{ "node": "Empty TwiML 200", "type": "main", "index": 0 }]]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [[{ "node": "SMS Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Conversation Memory": {
+      "ai_memory": [[{ "node": "SMS Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "Structured Output": {
+      "ai_outputParser": [[{ "node": "SMS Agent", "type": "ai_outputParser", "index": 0 }]]
+    },
+    "SMS Agent": {
+      "main": [[{ "node": "Prepare Reply", "type": "main", "index": 0 }]]
+    },
+    "Prepare Reply": {
+      "main": [[{ "node": "Send Reply", "type": "main", "index": 0 }]]
+    },
+    "Send Reply": {
+      "main": [[{ "node": "Needs a Human?", "type": "main", "index": 0 }]]
+    },
+    "Needs a Human?": {
+      "main": [
+        [{ "node": "Alert Clinic — Handover", "type": "main", "index": 0 }],
+        [{ "node": "Booking Confirmed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Alert Clinic — Handover": {
+      "main": [[{ "node": "Empty TwiML 200", "type": "main", "index": 0 }]]
+    },
+    "Booking Confirmed?": {
+      "main": [
+        [{ "node": "Log Appointment", "type": "main", "index": 0 }],
+        [{ "node": "Empty TwiML 200", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Appointment": {
+      "main": [[{ "node": "Empty TwiML 200", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Karachi"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "smile-care-dental"
+  },
+  "tags": []
+}
+
