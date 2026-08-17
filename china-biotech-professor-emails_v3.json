@@ -1,0 +1,570 @@
+{
+  "name": "China Scholarship Uni - MS Biotech Professor Emails",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks"
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "q1",
+              "name": "queries",
+              "value": "=[\"China universities CSC scholarship MS Biotechnology 2026\",\"full scholarship master biotechnology China university admission\",\"China university school of life sciences scholarship international students master\",\"Chinese Government Scholarship biotechnology bioengineering master program university\",\"China university master molecular biology microbiology scholarship international students\",\"China university biotechnology department faculty professor email\"]",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2",
+      "name": "Search Queries",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "queries",
+        "options": {}
+      },
+      "id": "3",
+      "name": "Split Queries",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.queries }}"
+            },
+            {
+              "name": "num",
+              "value": "20"
+            },
+            {
+              "name": "hl",
+              "value": "en"
+            },
+            {
+              "name": "api_key",
+              "value": "YOUR_SERPAPI_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4",
+      "name": "Google Search (SerpAPI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "organic_results",
+        "options": {}
+      },
+      "id": "5",
+      "name": "Split Results",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        60,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  const link = item.json.link || '';\n  const title = item.json.title || '';\n  const snippet = item.json.snippet || '';\n  if (!link) continue;\n  let host = '';\n  try { host = new URL(link).hostname; } catch (e) { continue; }\n  const isEdu = /\\.edu\\.cn$/i.test(host) || /\\.ac\\.cn$/i.test(host);\n  if (!isEdu) continue;\n  out.push({ json: { university_domain: host, url: link, title, snippet } });\n}\nreturn out;"
+      },
+      "id": "6",
+      "name": "Filter Chinese Uni Domains",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "compare": "selectedFields",
+        "fieldsToCompare": "university_domain",
+        "options": {}
+      },
+      "id": "7",
+      "name": "Remove Duplicate Universities",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 20
+      },
+      "id": "8",
+      "name": "Limit Universities",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=University domain: {{ $json.university_domain }}\nFound URL: {{ $json.url }}\nTitle: {{ $json.title }}\nSnippet: {{ $json.snippet }}",
+        "options": {
+          "systemMessage": "You are a university scholarship + faculty researcher for Chinese universities.\nSTEP 1 - Scholarship check: use the search tool to verify this university offers scholarships to INTERNATIONAL master's students (CSC / Chinese Government Scholarship, Presidential/University Scholarship, Provincial Scholarship, Belt & Road, or full/partial tuition waiver + stipend).\nSTEP 2 - Field match: confirm the university has a master's (MS/MSc) program in Biotechnology OR a closely related field: Biological Sciences, Life Sciences, Bioengineering, Biomedical Engineering, Molecular Biology, Genetics, Biochemistry, Microbiology, Bioinformatics, Food Biotechnology, Agricultural Biotechnology, Pharmaceutical Biotechnology, Cell Biology, Immunology.\nSTEP 3 - Faculty pages: find the pages most likely to LIST FACULTY/PROFESSORS with contact emails for those departments. Prefer English pages (en.*, /en/, /english/, 'Faculty', 'Our Team', 'Academic Staff', 'Supervisors').\nOnly continue if BOTH scholarship and a matching field exist.\nReturn ONLY valid JSON:\n{\"university_name\":\"...\",\"domain\":\"...\",\"scholarship_available\":true,\"scholarship_types\":\"CSC, University Scholarship\",\"scholarship_url\":\"...\",\"matched_fields\":[\"MS Biotechnology\",\"Molecular Biology\"],\"faculty_urls\":[\"url1\",\"url2\",\"url3\"]}\nIf no scholarship OR no matching field, return {\"scholarship_available\":false,\"faculty_urls\":[]}.\nMax 3 URLs, most promising first."
+        }
+      },
+      "id": "9",
+      "name": "AI Agent 1 - Find Faculty Pages",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {}
+      },
+      "id": "10",
+      "name": "OpenAI Model 1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        820,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "11",
+      "name": "SerpAPI Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolSerpApi",
+      "typeVersion": 1,
+      "position": [
+        980,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  let raw = item.json.output || item.json.text || '{}';\n  raw = String(raw).replace(/```json|```/g, '').trim();\n  let obj; try { obj = JSON.parse(raw); } catch (e) { continue; }\n  if (obj.scholarship_available === false) continue;\n  const urls = Array.isArray(obj.faculty_urls) ? obj.faculty_urls : [];\n  for (const u of urls.slice(0, 3)) {\n    if (!u || !/^https?:/i.test(u)) continue;\n    out.push({ json: {\n      university_name: obj.university_name || '',\n      domain: obj.domain || '',\n      scholarship_types: obj.scholarship_types || '',\n      scholarship_url: obj.scholarship_url || '',\n      matched_fields: Array.isArray(obj.matched_fields) ? obj.matched_fields.join(', ') : (obj.matched_fields || ''),\n      faculty_url: u\n    } });\n  }\n}\nreturn out;"
+      },
+      "id": "12",
+      "name": "Parse Faculty URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.faculty_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "13",
+      "name": "Fetch Faculty Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => {\n  const html = String(i.json.data || '');\n  const text = html.replace(/<script[\\s\\S]*?<\\/script>/gi,' ').replace(/<style[\\s\\S]*?<\\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\\s+/g,' ').slice(0, 12000);\n  const emails = [...new Set((html.match(/[A-Za-z0-9._%+-]+(?:@|\\(at\\)|\\[at\\])[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g) || []))].slice(0, 60);\n  return { json: { ...i.json, page_text: text, raw_emails: emails } };\n});"
+      },
+      "id": "14",
+      "name": "Clean HTML + Regex Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=University: {{ $('Parse Faculty URLs').item.json.university_name }}\nScholarships: {{ $('Parse Faculty URLs').item.json.scholarship_types }}\nMatched fields: {{ $('Parse Faculty URLs').item.json.matched_fields }}\nPage URL: {{ $('Parse Faculty URLs').item.json.faculty_url }}\nEmails found by regex: {{ JSON.stringify($json.raw_emails) }}\n\nPage text:\n{{ $json.page_text }}",
+        "options": {
+          "systemMessage": "You extract biotechnology-related faculty contacts from a Chinese university faculty page.\nKeep ONLY professors/researchers/supervisors whose department or research relates to: Biotechnology, Biological Sciences, Life Sciences, Bioengineering, Biomedical Engineering, Molecular Biology, Genetics, Biochemistry, Microbiology, Bioinformatics, Cell Biology, Immunology, Food/Agricultural/Pharmaceutical Biotechnology.\nIgnore admin/office/generic emails unless no professor email exists.\nCopy the university, scholarship and field info from the input into every row.\nReturn ONLY a valid JSON array:\n[{\"university\":\"...\",\"scholarship\":\"...\",\"matched_field\":\"...\",\"professor_name\":\"...\",\"title\":\"...\",\"department\":\"...\",\"research_area\":\"...\",\"email\":\"...\",\"profile_url\":\"...\"}]\nIf nothing relevant, return []."
+        }
+      },
+      "id": "15",
+      "name": "AI Agent 2 - Extract Professors",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {}
+      },
+      "id": "16",
+      "name": "OpenAI Model 2",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  let raw = item.json.output || item.json.text || '[]';\n  raw = String(raw).replace(/```json|```/g, '').trim();\n  let arr; try { arr = JSON.parse(raw); } catch (e) { continue; }\n  if (!Array.isArray(arr)) continue;\n  for (const p of arr) {\n    if (!p.email || !/@/.test(p.email)) continue;\n    out.push({ json: p });\n  }\n}\nreturn out;"
+      },
+      "id": "17",
+      "name": "Parse Professors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "compare": "selectedFields",
+        "fieldsToCompare": "email",
+        "options": {}
+      },
+      "id": "18",
+      "name": "Remove Duplicate Emails",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "19",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = ($input.first().json.data || []);\nconst esc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst tds = rows.map(r => '<tr>'\n  + '<td>' + esc(r.university) + '</td>'\n  + '<td>' + esc(r.scholarship) + '</td>'\n  + '<td>' + esc(r.matched_field || r.department) + '</td>'\n  + '<td>' + esc(r.professor_name) + '</td>'\n  + '<td>' + esc(r.title) + '</td>'\n  + '<td>' + esc(r.research_area) + '</td>'\n  + '<td>' + esc(r.email) + '</td>'\n  + '<td>' + (r.profile_url ? '<a href=\"' + esc(r.profile_url) + '\">Link</a>' : '') + '</td>'\n  + '</tr>').join('');\nconst html = '<h2>China Scholarship Universities - MS Biotechnology Professor Contacts</h2>'\n  + '<p>Total contacts: ' + rows.length + '</p>'\n  + '<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\">'\n  + '<tr><th>University</th><th>Scholarship</th><th>Field</th><th>Professor</th><th>Title</th><th>Research Area</th><th>Email</th><th>Profile</th></tr>'\n  + tds + '</table>';\nconst head = ['University','Scholarship','Field','Professor','Title','Research Area','Email','Profile'];\nconst q = v => '\"' + String(v == null ? '' : v).replace(/\"/g,'\"\"') + '\"';\nconst csv = head.join(',') + '\\n' + rows.map(r => [r.university, r.scholarship, r.matched_field || r.department, r.professor_name, r.title, r.research_area, r.email, r.profile_url].map(q).join(',')).join('\\n');\nreturn [{ json: { html, csv, count: rows.length } }];"
+      },
+      "id": "20",
+      "name": "Build Email HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_EMAIL@gmail.com",
+        "subject": "=China Scholarship Unis - MS Biotech Professors ({{ $json.count }} contacts)",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "21",
+      "name": "Send Email (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2680,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Search Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Queries": {
+      "main": [
+        [
+          {
+            "node": "Split Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Queries": {
+      "main": [
+        [
+          {
+            "node": "Google Search (SerpAPI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Search (SerpAPI)": {
+      "main": [
+        [
+          {
+            "node": "Split Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Results": {
+      "main": [
+        [
+          {
+            "node": "Filter Chinese Uni Domains",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Chinese Uni Domains": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicate Universities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicate Universities": {
+      "main": [
+        [
+          {
+            "node": "Limit Universities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit Universities": {
+      "main": [
+        [
+          {
+            "node": "AI Agent 1 - Find Faculty Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model 1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent 1 - Find Faculty Pages",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SerpAPI Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent 1 - Find Faculty Pages",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent 1 - Find Faculty Pages": {
+      "main": [
+        [
+          {
+            "node": "Parse Faculty URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Faculty URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch Faculty Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Faculty Page": {
+      "main": [
+        [
+          {
+            "node": "Clean HTML + Regex Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean HTML + Regex Emails": {
+      "main": [
+        [
+          {
+            "node": "AI Agent 2 - Extract Professors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model 2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent 2 - Extract Professors",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent 2 - Extract Professors": {
+      "main": [
+        [
+          {
+            "node": "Parse Professors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Professors": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicate Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicate Emails": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Build Email HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email HTML": {
+      "main": [
+        [
+          {
+            "node": "Send Email (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
