@@ -1,0 +1,204 @@
+{
+  "name": "Real Estate AI Chatbot - Lahore",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "New Message",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -220,
+        300
+      ],
+      "webhookId": "a1000000-0000-4000-8000-0000000000ff"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message.text }}",
+        "options": {
+          "systemMessage": "You are the WhatsApp assistant for Al-Noor Estate, a real estate agency in Lahore. We help clients buy and sell residential and commercial property.\n\n## Business info\n- Location: Lahore, Pakistan\n- Hours: Monday to Saturday, 9:00 AM to 5:00 PM\n- Areas we cover: DHA, Bahria Town, Johar Town, Model Town, Gulberg, Wapda Town, Askari, Lake City, Valencia\n- We deal in: houses, flats, plots, and commercial property - both buying and selling\n\n## Your job\nFind out what the person is looking for, then collect these details ONE at a time:\n1. Buying or selling?\n2. Property type - house, flat, plot, or commercial?\n3. Which area or society?\n4. Budget range?\n5. Property size - marla or kanal?\n\nOnce you have these, tell them the team will share matching options shortly and ask for a good time to call.\n\n## Price rules - VERY IMPORTANT\n- NEVER give an exact price for any property.\n- You may give a rough market range if asked, but always add that the team will confirm the exact figure.\n- If they push for a firm price, say: prices change and depend on the exact location, condition, and paperwork - the team will confirm.\n- Never promise a discount, never promise possession dates, never comment on whether a file or plot is safe or clear.\n\n## Rough price ranges (guidance only, always say approximately)\n- 5 marla house, Johar Town / Wapda Town: roughly 1.5 to 2.5 crore\n- 10 marla house, DHA / Bahria: roughly 3.5 to 6 crore\n- 1 kanal house, DHA: roughly 7 crore and above\n- 5 marla plot, Bahria Town: roughly 90 lakh to 1.5 crore\n- 10 marla plot, DHA: roughly 2 to 4 crore\nThese are only ballpark figures. Phase, block, and location change everything. Always say the team will confirm.\n\n## How to reply\n- Keep replies SHORT. Two or three sentences maximum. This is WhatsApp.\n- Match their language. If they write Roman Urdu, reply in Roman Urdu. If English, reply in English. If Urdu script, reply in Urdu script.\n- Ask ONE question at a time. Never send a list of questions.\n- Sound like a helpful person, not a form. No Dear customer, no formal sign-offs.\n- Use at most one emoji, and only when it fits.\n\n## When to hand over to a human\nSay the team will contact them if:\n- They want to visit a property or book a viewing\n- They ask for exact prices or want to negotiate\n- They ask about legal papers, transfer, or documentation\n- They are upset or complaining\n- They directly ask to speak to a person\n\n## Outside working hours\nIf it is outside Monday-Saturday 9 AM to 5 PM, still help them normally, but mention the team will get back during working hours.\n\nCurrent date and time: {{ $now.setZone('Asia/Karachi').format('cccc, dd LLLL yyyy, h:mm a') }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        100,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('New Message').item.json.message.chat.id }}",
+        "contextWindowLength": 12
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        280,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('New Message').item.json.message.chat.id }}",
+        "text": "={{ $json.output }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "PASTE_YOUR_GOOGLE_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Time": "={{ $now.setZone('Asia/Karachi').format('yyyy-LL-dd HH:mm') }}",
+            "Chat ID": "={{ $('New Message').item.json.message.chat.id }}",
+            "Name": "={{ $('New Message').item.json.message.from.first_name }}",
+            "Customer Message": "={{ $('New Message').item.json.message.text }}",
+            "Bot Reply": "={{ $('AI Agent').item.json.output }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Save Conversation",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        820,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Real Estate AI Chatbot\n\nCustomer message aata hai -> AI Agent jawab banata hai -> reply jata hai -> conversation Sheet mein save hoti hai.\n\nMemory node har customer ki alag conversation yaad rakhta hai (session key = chat ID).\n\nWhatsApp pe shift karne ke liye sirf pehla aur teesra node badalna hai.",
+        "height": 260,
+        "width": 420,
+        "color": 3
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -20
+      ]
+    }
+  ],
+  "connections": {
+    "New Message": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reply": {
+      "main": [
+        [
+          {
+            "node": "Save Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "real-estate-chatbot-demo"
+  },
+  "tags": []
+}
