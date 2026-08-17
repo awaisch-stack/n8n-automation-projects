@@ -1,0 +1,369 @@
+{
+  "name": "AI Assessment Report - 3 Agent Chain",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "assessment-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-assessment-submitted",
+      "name": "Webhook - Assessment Submitted",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        300
+      ],
+      "webhookId": "a7f3c1e2-9b64-4d18-8c52-1f0e6a9b3d47",
+      "notes": "POST the scored assessment here. Swap for a DB trigger or form node if you are not calling this over HTTP."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validates and normalizes the incoming assessment payload.\n// Every downstream node reads its inputs from here, so payload shape changes\n// only ever need to be handled in this one node.\n\nconst CONFIG = {\n  model: 'gpt-4.1',\n  temperature_analysis: 0.1, // Agents 1 & 2: analysis must be reproducible run-to-run.\n  temperature_writing: 0.4, // Agent 3: enough freedom for natural prose, not enough to drift.\n  max_tokens: 4000, // NOTE: if you switch to a reasoning model, rename this to max_completion_tokens.\n};\n\nconst raw = $input.first().json;\nconst payload = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\nconst num = (v) => {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : null;\n};\n\n// Accepts either [{ dimension, score }] or { \"Dimension Name\": 72 }.\nfunction normalizeScores(input) {\n  if (!input) return [];\n  const rows = Array.isArray(input)\n    ? input\n    : Object.entries(input).map(([dimension, score]) => ({ dimension, score }));\n  return rows\n    .map((r) => ({\n      dimension: String(r.dimension ?? r.name ?? '').trim(),\n      score: num(r.score ?? r.value),\n      max_score: num(r.max_score) ?? 100,\n    }))\n    .filter((r) => r.dimension && r.score !== null);\n}\n\nfunction normalizeBenchmarks(input) {\n  if (!input) return [];\n  const rows = Array.isArray(input)\n    ? input\n    : Object.entries(input).map(([dimension, benchmark_score]) => ({ dimension, benchmark_score }));\n  return rows\n    .map((r) => ({\n      dimension: String(r.dimension ?? r.name ?? '').trim(),\n      benchmark_score: num(r.benchmark_score ?? r.benchmark ?? r.score ?? r.value),\n    }))\n    .filter((r) => r.dimension && r.benchmark_score !== null);\n}\n\nconst assessment_type = String(payload.assessment_type ?? '').trim();\nif (!assessment_type) {\n  throw new Error('assessment_type is required.');\n}\n\nconst scores = normalizeScores(payload.scored_results ?? payload.scores);\nif (scores.length === 0) {\n  throw new Error('scored_results is required and must contain at least one scored dimension.');\n}\n\nconst benchmarks = normalizeBenchmarks(payload.benchmark_data ?? payload.benchmarks);\n\n// Partial or absent benchmarks are allowed - the prompts handle them explicitly\n// rather than letting the model invent a comparison figure.\nconst benchmarked = new Set(benchmarks.map((b) => b.dimension.toLowerCase()));\nconst missing_benchmarks = scores\n  .map((s) => s.dimension)\n  .filter((d) => !benchmarked.has(d.toLowerCase()));\n\nreturn [\n  {\n    json: {\n      config: CONFIG,\n      assessment_type,\n      recipient_name: String(payload.recipient_name ?? payload.company_name ?? 'the respondent').trim(),\n      benchmark_label: String(payload.benchmark_label ?? 'peer benchmark').trim(),\n      scores,\n      benchmarks,\n      missing_benchmarks,\n      raw_answers: Array.isArray(payload.raw_answers) ? payload.raw_answers : [],\n    },\n  },\n];\n"
+      },
+      "id": "prepare-input",
+      "name": "Prepare Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        300
+      ],
+      "notes": "Single source of truth for input shape + model/temperature config. Edit CONFIG here to change model."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent 1 - Insight Extraction. Builds the full OpenAI request body so the\n// HTTP node stays a dumb transport and the prompt stays readable/diffable here.\n\nconst input = $input.first().json;\n\nconst system = [\n  'You are a senior organizational psychologist and data analyst specializing in ' +\n    input.assessment_type +\n    ' assessments. Your job is to extract accurate, evidence-based insights from a completed assessment - nothing more.',\n  '',\n  'You will be given:',\n  \"1. The respondent's scored results, broken down by dimension.\",\n  '2. Benchmark data for those dimensions, where it exists.',\n  '3. Any raw qualitative answers relevant to interpretation.',\n  '',\n  'RULES:',\n  '- Every claim you make MUST be traceable to a specific score, score gap, or answer pattern. Never state a strength, weakness, or flag without citing the exact dimension and the number behind it.',\n  '- Do not soften or inflate findings to sound positive. Be accurate, not flattering.',\n  '- Do not generate recommendations or advice in this step - that happens later in the chain.',\n  '- Flag anything unusual: contradictory answers, extreme outliers, or patterns that do not fit a coherent profile. These often matter more than clean results.',\n  '- For each dimension that HAS a benchmark, state the direction and size of the gap numerically (e.g. \"14 points below peer benchmark\", not \"somewhat below average\").',\n  '- For each dimension with NO benchmark supplied, set direction to \"no benchmark available\", set benchmark_score and gap to null, and make no claim about how it compares. Never estimate, infer, or invent a benchmark value.',\n  '- Use only the numbers supplied in the input. Do not compute percentiles or norms that were not given to you.',\n  '- Write for a business audience: precise, confident, zero filler. Avoid generic phrasing such as \"it is important to note that\" or \"overall, the results suggest\".',\n].join('\\n');\n\n// dimensions_without_benchmark is passed explicitly so the model cannot quietly\n// fill the gap from prior knowledge.\nconst userPayload = {\n  assessment_type: input.assessment_type,\n  benchmark_label: input.benchmark_label,\n  scored_results: input.scores,\n  benchmark_data: input.benchmarks,\n  dimensions_without_benchmark: input.missing_benchmarks,\n  raw_answers: input.raw_answers,\n};\n\nconst finding = {\n  type: 'object',\n  properties: {\n    area: { type: 'string' },\n    evidence: { type: 'string' },\n    score_reference: { type: 'string' },\n  },\n  required: ['area', 'evidence', 'score_reference'],\n  additionalProperties: false,\n};\n\nconst schema = {\n  type: 'object',\n  properties: {\n    strengths: { type: 'array', items: finding },\n    weaknesses: { type: 'array', items: finding },\n    green_flags: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: { observation: { type: 'string' }, evidence: { type: 'string' } },\n        required: ['observation', 'evidence'],\n        additionalProperties: false,\n      },\n    },\n    red_flags: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          observation: { type: 'string' },\n          evidence: { type: 'string' },\n          severity: { type: 'string', enum: ['low', 'medium', 'high'] },\n        },\n        required: ['observation', 'evidence', 'severity'],\n        additionalProperties: false,\n      },\n    },\n    patterns: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          description: { type: 'string' },\n          dimensions_involved: { type: 'array', items: { type: 'string' } },\n          evidence: { type: 'string' },\n        },\n        required: ['description', 'dimensions_involved', 'evidence'],\n        additionalProperties: false,\n      },\n    },\n    benchmark_differences: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          dimension: { type: 'string' },\n          respondent_score: { type: 'number' },\n          benchmark_score: { type: ['number', 'null'] },\n          gap: { type: ['number', 'null'] },\n          direction: {\n            type: 'string',\n            enum: ['above', 'below', 'at benchmark', 'no benchmark available'],\n          },\n        },\n        required: ['dimension', 'respondent_score', 'benchmark_score', 'gap', 'direction'],\n        additionalProperties: false,\n      },\n    },\n  },\n  required: [\n    'strengths',\n    'weaknesses',\n    'green_flags',\n    'red_flags',\n    'patterns',\n    'benchmark_differences',\n  ],\n  additionalProperties: false,\n};\n\nreturn [\n  {\n    json: {\n      request_body: {\n        model: input.config.model,\n        temperature: input.config.temperature_analysis,\n        max_tokens: input.config.max_tokens,\n        messages: [\n          { role: 'system', content: system },\n          { role: 'user', content: JSON.stringify(userPayload, null, 2) },\n        ],\n        response_format: {\n          type: 'json_schema',\n          json_schema: { name: 'assessment_insights', strict: true, schema },\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "build-agent-1-request",
+      "name": "Build Agent 1 Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        300
+      ],
+      "notes": "Insight extraction prompt + strict JSON schema."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "agent-1-insight-extraction",
+      "name": "Agent 1 - Insight Extraction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        160,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "Temperature 0.1. Strict structured output."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parses Agent 1's response and enforces the \"no invented benchmarks\" rule in\n// code, so a prompt slip cannot put a fabricated comparison into the report.\n\nconst res = $input.first().json;\nconst choice = res.choices && res.choices[0];\n\nif (!choice) {\n  throw new Error('Agent 1: no choice returned. Raw response: ' + JSON.stringify(res).slice(0, 500));\n}\nif (choice.message && choice.message.refusal) {\n  throw new Error('Agent 1 refused to answer: ' + choice.message.refusal);\n}\nif (choice.finish_reason === 'length') {\n  throw new Error('Agent 1: output truncated (finish_reason=length). Increase config.max_tokens.');\n}\n\nlet insights;\ntry {\n  insights = JSON.parse(choice.message.content);\n} catch (e) {\n  throw new Error('Agent 1 returned invalid JSON: ' + e.message);\n}\n\nconst prep = $('Prepare Input').first().json;\nconst supplied = new Map(prep.benchmarks.map((b) => [b.dimension.toLowerCase(), b.benchmark_score]));\nconst actual = new Map(prep.scores.map((s) => [s.dimension.toLowerCase(), s.score]));\n\ninsights.benchmark_differences = (insights.benchmark_differences || []).map((d) => {\n  const key = String(d.dimension || '').toLowerCase();\n  const trueScore = actual.has(key) ? actual.get(key) : d.respondent_score;\n\n  if (!supplied.has(key)) {\n    return {\n      ...d,\n      respondent_score: trueScore,\n      benchmark_score: null,\n      gap: null,\n      direction: 'no benchmark available',\n    };\n  }\n\n  // Recompute the gap from source data rather than trusting the model's arithmetic.\n  const bench = supplied.get(key);\n  const gap = Math.round((trueScore - bench) * 100) / 100;\n  return {\n    ...d,\n    respondent_score: trueScore,\n    benchmark_score: bench,\n    gap,\n    direction: gap > 0 ? 'above' : gap < 0 ? 'below' : 'at benchmark',\n  };\n});\n\nreturn [{ json: { insights, usage: res.usage || null } }];\n"
+      },
+      "id": "parse-agent-1",
+      "name": "Parse Agent 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        300
+      ],
+      "notes": "Parses output and recomputes every benchmark gap from source data - the model never supplies a number that reaches the report."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent 2 - Recommendation & Strategy. Consumes only Agent 1's structured\n// findings, so every recommendation is anchored to a cited finding.\n\nconst prep = $('Prepare Input').first().json;\nconst insights = $input.first().json.insights;\n\nconst system = [\n  'You are a strategy consultant who advises organizations based on ' +\n    prep.assessment_type +\n    ' assessment results. You will be given a structured set of findings (strengths, weaknesses, flags, patterns, benchmark gaps) already extracted from the assessment. Convert those findings into recommendations a real consultant would give in a paid session - not generic self-help advice.',\n  '',\n  'RULES:',\n  '- Every recommendation must name the specific finding it responds to, quoting the dimension and figure from that finding in responds_to_finding.',\n  '- Never give advice that could apply to almost anyone regardless of their results. \"Communicate more effectively\" or \"invest in training\" are banned unless tied to a specific cited weakness with a concrete mechanism.',\n  '- Prioritize: assign priority \"high\" to recommendations addressing the largest benchmark gaps or highest-severity red flags, and order the array so high-priority items come first.',\n  '- Do not recommend anything against a dimension marked \"no benchmark available\" on the basis of a comparison. You may still act on the raw score.',\n  '- Keep the three output types genuinely distinct:',\n  '  1. practical_recommendations - immediate, tactical, low-effort actions that can start this quarter.',\n  '  2. innovative_strategies - non-obvious moves grounded in how top performers in this benchmark group actually operate.',\n  '  3. strategic_initiatives - larger, longer-term structural moves suited to leadership or board-level decision-making.',\n  '- Language must be decisive and specific. No hedging (\"could potentially consider\"), no filler.',\n].join('\\n');\n\nconst schema = {\n  type: 'object',\n  properties: {\n    practical_recommendations: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          recommendation: { type: 'string' },\n          responds_to_finding: { type: 'string' },\n          effort: { type: 'string', enum: ['low', 'medium', 'high'] },\n          priority: { type: 'string', enum: ['low', 'medium', 'high'] },\n        },\n        required: ['recommendation', 'responds_to_finding', 'effort', 'priority'],\n        additionalProperties: false,\n      },\n    },\n    innovative_strategies: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          strategy: { type: 'string' },\n          rationale: { type: 'string' },\n          responds_to_finding: { type: 'string' },\n        },\n        required: ['strategy', 'rationale', 'responds_to_finding'],\n        additionalProperties: false,\n      },\n    },\n    strategic_initiatives: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          initiative: { type: 'string' },\n          responds_to_finding: { type: 'string' },\n          impact: { type: 'string', enum: ['low', 'medium', 'high'] },\n          timeframe: { type: 'string', enum: ['short-term', 'medium-term', 'long-term'] },\n        },\n        required: ['initiative', 'responds_to_finding', 'impact', 'timeframe'],\n        additionalProperties: false,\n      },\n    },\n  },\n  required: ['practical_recommendations', 'innovative_strategies', 'strategic_initiatives'],\n  additionalProperties: false,\n};\n\nreturn [\n  {\n    json: {\n      request_body: {\n        model: prep.config.model,\n        temperature: prep.config.temperature_analysis,\n        max_tokens: prep.config.max_tokens,\n        messages: [\n          { role: 'system', content: system },\n          { role: 'user', content: JSON.stringify({ findings: insights }, null, 2) },\n        ],\n        response_format: {\n          type: 'json_schema',\n          json_schema: { name: 'assessment_recommendations', strict: true, schema },\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "build-agent-2-request",
+      "name": "Build Agent 2 Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        300
+      ],
+      "notes": "Recommendation prompt + strict JSON schema."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "agent-2-recommendation-and-strategy",
+      "name": "Agent 2 - Recommendation and Strategy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "Temperature 0.1. Strict structured output."
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nconst choice = res.choices && res.choices[0];\n\nif (!choice) {\n  throw new Error('Agent 2: no choice returned. Raw response: ' + JSON.stringify(res).slice(0, 500));\n}\nif (choice.message && choice.message.refusal) {\n  throw new Error('Agent 2 refused to answer: ' + choice.message.refusal);\n}\nif (choice.finish_reason === 'length') {\n  throw new Error('Agent 2: output truncated (finish_reason=length). Increase config.max_tokens.');\n}\n\nlet recommendations;\ntry {\n  recommendations = JSON.parse(choice.message.content);\n} catch (e) {\n  throw new Error('Agent 2 returned invalid JSON: ' + e.message);\n}\n\nreturn [{ json: { recommendations, usage: res.usage || null } }];\n"
+      },
+      "id": "parse-agent-2",
+      "name": "Parse Agent 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ],
+      "notes": ""
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds dashboard_data deterministically from the original scores and from\n// Agent 2's priorities. No model involved: the charts can never disagree with\n// the source data, and no number is ever re-typed by an LLM.\n\nconst prep = $('Prepare Input').first().json;\nconst insights = $('Parse Agent 1').first().json.insights;\nconst recommendations = $input.first().json.recommendations;\n\nconst benchMap = new Map(prep.benchmarks.map((b) => [b.dimension.toLowerCase(), b.benchmark_score]));\nconst round2 = (n) => Math.round(n * 100) / 100;\n\nconst dimension_scores = prep.scores.map((s) => {\n  const key = s.dimension.toLowerCase();\n  const benchmark_score = benchMap.has(key) ? benchMap.get(key) : null;\n  return {\n    dimension: s.dimension,\n    respondent_score: s.score,\n    benchmark_score,\n    max_score: s.max_score,\n    gap: benchmark_score === null ? null : round2(s.score - benchmark_score),\n  };\n});\n\nconst strengths_vs_weaknesses = {\n  strengths_count: (insights.strengths || []).length,\n  weaknesses_count: (insights.weaknesses || []).length,\n  green_flags_count: (insights.green_flags || []).length,\n  red_flags_count: (insights.red_flags || []).length,\n};\n\nconst rank = { high: 0, medium: 1, low: 2 };\nconst priority_actions = (recommendations.practical_recommendations || [])\n  .slice()\n  .sort((a, b) => (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3))\n  .map((r) => ({\n    action: r.recommendation,\n    priority: r.priority,\n    effort: r.effort,\n    responds_to_finding: r.responds_to_finding,\n  }));\n\nconst benchmarked = dimension_scores.filter((d) => d.benchmark_score !== null);\nconst below = benchmarked.filter((d) => d.gap < 0);\n\nconst summary = {\n  dimensions_assessed: dimension_scores.length,\n  dimensions_benchmarked: benchmarked.length,\n  dimensions_above_benchmark: benchmarked.filter((d) => d.gap > 0).length,\n  dimensions_below_benchmark: below.length,\n  // Null when nothing sits below benchmark, rather than reporting the least-above dimension.\n  largest_gap_below: below.length ? below.reduce((a, b) => (a.gap <= b.gap ? a : b)) : null,\n  // Normalized so dimensions scored out of different maximums average fairly.\n  average_score_pct: round2(\n    (dimension_scores.reduce((sum, d) => sum + d.respondent_score / d.max_score, 0) /\n      dimension_scores.length) *\n      100,\n  ),\n};\n\nreturn [\n  {\n    json: {\n      recommendations,\n      dashboard_data: {\n        dimension_scores,\n        strengths_vs_weaknesses,\n        priority_actions,\n        summary,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "build-dashboard-data",
+      "name": "Build Dashboard Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        300
+      ],
+      "notes": "Deterministic. No LLM. Chart data comes straight from the scored input so charts can never contradict the prose."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agent 3 - Report Writer. Narrative only. dashboard_data was already computed\n// in code, and is passed in read-only so the prose quotes the same figures the\n// charts render.\n\nconst prep = $('Prepare Input').first().json;\nconst insights = $('Parse Agent 1').first().json.insights;\nconst staged = $input.first().json;\n\nconst system = [\n  'You are producing the final written deliverable of a professional ' +\n    prep.assessment_type +\n    ' assessment report for ' +\n    prep.recipient_name +\n    '. You will receive extracted insights (from an analysis step), recommendations (from a strategy step), and the exact computed figures used by the report dashboard.',\n  '',\n  'RULES:',\n  '- Write in a confident, consultative tone - the way a senior consultant presents findings to executives. No robotic AI tone, no boilerplate phrases, no hedging.',\n  '- The executive_summary must be 3-5 sentences and must stand alone. It is what a board member reads if they read nothing else.',\n  '- Every section must be specific to THIS respondent. If a sentence would still be true for a different respondent with different scores, rewrite it.',\n  '- Quote figures only from the supplied data, and quote them exactly as given in dashboard_figures. Do not round, restate, or recompute them.',\n  '- Never describe a dimension as above or below benchmark when its benchmark_score is null. Refer to those dimensions by their raw score only.',\n  '- Do not output any numbers-only structures, tables, or JSON inside the narrative fields - the dashboard is rendered separately. Prose only.',\n  '- Each narrative field is plain prose (paragraphs). You may use short line breaks between paragraphs but no markdown headings.',\n].join('\\n');\n\nconst userPayload = {\n  recipient_name: prep.recipient_name,\n  assessment_type: prep.assessment_type,\n  benchmark_label: prep.benchmark_label,\n  insights,\n  recommendations: staged.recommendations,\n  dashboard_figures: staged.dashboard_data,\n};\n\nconst schema = {\n  type: 'object',\n  properties: {\n    executive_summary: { type: 'string' },\n    key_strengths: { type: 'string' },\n    areas_for_improvement: { type: 'string' },\n    flags_summary: { type: 'string' },\n    benchmark_comparison_narrative: { type: 'string' },\n    recommendations_narrative: { type: 'string' },\n    strategic_initiatives_narrative: { type: 'string' },\n  },\n  required: [\n    'executive_summary',\n    'key_strengths',\n    'areas_for_improvement',\n    'flags_summary',\n    'benchmark_comparison_narrative',\n    'recommendations_narrative',\n    'strategic_initiatives_narrative',\n  ],\n  additionalProperties: false,\n};\n\nreturn [\n  {\n    json: {\n      request_body: {\n        model: prep.config.model,\n        temperature: prep.config.temperature_writing,\n        max_tokens: prep.config.max_tokens,\n        messages: [\n          { role: 'system', content: system },\n          { role: 'user', content: JSON.stringify(userPayload, null, 2) },\n        ],\n        response_format: {\n          type: 'json_schema',\n          json_schema: { name: 'assessment_report_narrative', strict: true, schema },\n        },\n      },\n    },\n  },\n];\n"
+      },
+      "id": "build-agent-3-request",
+      "name": "Build Agent 3 Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        300
+      ],
+      "notes": "Narrative-only prompt. Dashboard figures passed in read-only."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "agent-3-report-writer",
+      "name": "Agent 3 - Report Writer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "notes": "Temperature 0.4 for natural prose."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merges the narrative with the code-computed dashboard block and returns the\n// final report payload the frontend consumes.\n\nconst res = $input.first().json;\nconst choice = res.choices && res.choices[0];\n\nif (!choice) {\n  throw new Error('Agent 3: no choice returned. Raw response: ' + JSON.stringify(res).slice(0, 500));\n}\nif (choice.message && choice.message.refusal) {\n  throw new Error('Agent 3 refused to answer: ' + choice.message.refusal);\n}\nif (choice.finish_reason === 'length') {\n  throw new Error('Agent 3: output truncated (finish_reason=length). Increase config.max_tokens.');\n}\n\nlet report_narrative;\ntry {\n  report_narrative = JSON.parse(choice.message.content);\n} catch (e) {\n  throw new Error('Agent 3 returned invalid JSON: ' + e.message);\n}\n\nconst prep = $('Prepare Input').first().json;\nconst insights = $('Parse Agent 1').first().json.insights;\nconst staged = $('Build Dashboard Data').first().json;\n\nconst usage = [\n  $('Parse Agent 1').first().json.usage,\n  $('Parse Agent 2').first().json.usage,\n  res.usage || null,\n].filter(Boolean);\n\nconst total_tokens = usage.reduce((sum, u) => sum + (u.total_tokens || 0), 0);\n\nreturn [\n  {\n    json: {\n      meta: {\n        assessment_type: prep.assessment_type,\n        recipient_name: prep.recipient_name,\n        benchmark_label: prep.benchmark_label,\n        generated_at: new Date().toISOString(),\n        model: prep.config.model,\n        dimensions_without_benchmark: prep.missing_benchmarks,\n        total_tokens,\n      },\n      report_narrative,\n      dashboard_data: staged.dashboard_data,\n      // Kept for auditability: lets you trace any sentence in the report back to\n      // the finding and recommendation it came from.\n      source_findings: {\n        insights,\n        recommendations: staged.recommendations,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "assemble-final-report",
+      "name": "Assemble Final Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "notes": "Merges narrative + dashboard + audit trail."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1960,
+        300
+      ],
+      "notes": ""
+    }
+  ],
+  "connections": {
+    "Webhook - Assessment Submitted": {
+      "main": [
+        [
+          {
+            "node": "Prepare Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Input": {
+      "main": [
+        [
+          {
+            "node": "Build Agent 1 Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Agent 1 Request": {
+      "main": [
+        [
+          {
+            "node": "Agent 1 - Insight Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent 1 - Insight Extraction": {
+      "main": [
+        [
+          {
+            "node": "Parse Agent 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agent 1": {
+      "main": [
+        [
+          {
+            "node": "Build Agent 2 Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Agent 2 Request": {
+      "main": [
+        [
+          {
+            "node": "Agent 2 - Recommendation and Strategy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent 2 - Recommendation and Strategy": {
+      "main": [
+        [
+          {
+            "node": "Parse Agent 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agent 2": {
+      "main": [
+        [
+          {
+            "node": "Build Dashboard Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Dashboard Data": {
+      "main": [
+        [
+          {
+            "node": "Build Agent 3 Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Agent 3 Request": {
+      "main": [
+        [
+          {
+            "node": "Agent 3 - Report Writer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent 3 - Report Writer": {
+      "main": [
+        [
+          {
+            "node": "Assemble Final Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Final Report": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}
