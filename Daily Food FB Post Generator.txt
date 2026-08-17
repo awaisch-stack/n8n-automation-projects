@@ -1,0 +1,90 @@
+{
+  "name": "Daily Food FB Post Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Daily 9AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  \"model\": \"claude-sonnet-5\",\n  \"max_tokens\": 400,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"You are a social media content writer for a Facebook Page in the FOOD industry (restaurants, recipes, food brands).\\n\\nWrite ONE short, scroll-stopping Facebook post for today.\\n\\nRules:\\n- 2-4 sentences max, casual and conversational tone\\n- Start with a hook (question, bold statement, or relatable line) - never start with 'Check out' or 'Introducing'\\n- Add exactly 1 clear call-to-action at the end (comment, share, DM, or visit link - vary the type each run)\\n- Include 3-5 relevant hashtags, mix of broad and niche-specific\\n- Use 1-2 emojis max, placed naturally\\n- Never repeat the same opening line or structure as before - vary topic angle (recipe tease, behind-the-scenes, customer feeling, menu item, food fact/opinion) and CTA type each run\\n- Avoid buzzwords like elevate, unlock, game-changer, indulge\\n- Sound like a real person, not a robot or ad copy\\n\\nOutput ONLY valid JSON, no markdown fences, no extra commentary, in exactly this structure:\\n{\\\"post\\\": \\\"full post text with hook + body + CTA + emojis inline\\\", \\\"hashtags\\\": [\\\"#tag1\\\", \\\"#tag2\\\", \\\"#tag3\\\"]}\"\n    }\n  ]\n}) }}"
+      },
+      "id": "2",
+      "name": "Generate Post (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_API_KEY_CREDENTIAL_ID",
+          "name": "Anthropic API Key (x-api-key header)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.content[0].text;\nconst parsed = JSON.parse(raw);\nreturn [{\n  json: {\n    post: parsed.post,\n    hashtags: parsed.hashtags,\n    message: parsed.post + '\\n\\n' + parsed.hashtags.join(' ')\n  }\n}];"
+      },
+      "id": "3",
+      "name": "Parse JSON Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/YOUR_FACEBOOK_PAGE_ID/feed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "message", "value": "={{ $json.message }}" },
+            { "name": "access_token", "value": "YOUR_FACEBOOK_PAGE_ACCESS_TOKEN" }
+          ]
+        }
+      },
+      "id": "4",
+      "name": "Post to Facebook Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Daily 9AM Trigger": {
+      "main": [[{ "node": "Generate Post (Claude)", "type": "main", "index": 0 }]]
+    },
+    "Generate Post (Claude)": {
+      "main": [[{ "node": "Parse JSON Response", "type": "main", "index": 0 }]]
+    },
+    "Parse JSON Response": {
+      "main": [[{ "node": "Post to Facebook Page", "type": "main", "index": 0 }]]
+    }
+  }
+}
