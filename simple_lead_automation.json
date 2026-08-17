@@ -1,0 +1,95 @@
+{
+  "name": "Simple Lead Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Simple Lead Automation\nNew form lead comes in -> instant auto-reply + Slack alert + saved record. No manual steps. Great as a quick client demo.",
+        "height": 140,
+        "width": 320
+      },
+      "id": "sticky-1",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-260, -20]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-1",
+      "name": "New Form Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 160],
+      "webhookId": "new-lead-webhook"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "Thanks for reaching out, {{ $json.name }}!",
+        "message": "Hi {{ $json.name }},\n\nThanks for getting in touch — we've received your message and someone from our team will follow up shortly.\n\nBest,\nThe Team",
+        "options": {}
+      },
+      "id": "gmail-1",
+      "name": "Auto-Reply Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [40, 40]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": "={{ $env.SLACK_LEADS_CHANNEL_ID }}",
+        "text": "=New lead: *{{ $json.name }}* ({{ $json.email }})",
+        "options": {}
+      },
+      "id": "slack-1",
+      "name": "Notify Team",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [40, 160]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "sheetId": "={{ $env.LEADS_SHEET_ID }}",
+        "range": "Leads!A:C",
+        "fieldsUi": {
+          "values": [
+            { "column": "name", "fieldValue": "={{ $json.name }}" },
+            { "column": "email", "fieldValue": "={{ $json.email }}" },
+            { "column": "date_added", "fieldValue": "={{ $now }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets-1",
+      "name": "Save Record",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [40, 280]
+    }
+  ],
+  "connections": {
+    "New Form Lead": {
+      "main": [
+        [
+          { "node": "Auto-Reply Email", "type": "main", "index": 0 },
+          { "node": "Notify Team", "type": "main", "index": 0 },
+          { "node": "Save Record", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateId": "simple-lead-automation"
+  }
+}
